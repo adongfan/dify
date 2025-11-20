@@ -690,6 +690,57 @@ class WorkflowNodeExecutionConfig(BaseSettings):
     )
 
 
+class LogStoreConfig(BaseSettings):
+    """
+    Configuration for Alibaba Cloud LogStore storage
+    """
+
+    LOGSTORE_ENABLED: bool = Field(
+        description="Enable LogStore storage for workflow execution logs",
+        default=False,
+    )
+
+    LOGSTORE_PG_HOST: str = Field(
+        description="LogStore PostgreSQL protocol endpoint host",
+        default="127.0.0.1",
+    )
+
+    LOGSTORE_PG_PORT: int = Field(
+        description="LogStore PostgreSQL protocol endpoint port",
+        default=6432,
+    )
+
+    LOGSTORE_PG_USER: str = Field(
+        description="LogStore PostgreSQL protocol user",
+        default="",
+    )
+
+    LOGSTORE_PG_PASSWORD: str = Field(
+        description="LogStore PostgreSQL protocol password",
+        default="",
+    )
+
+    LOGSTORE_PROJECT: str = Field(
+        description="SLS Project name (used as database name in PG protocol)",
+        default="dify-workflow-logs",
+    )
+
+    LOGSTORE_WORKFLOW_RUNS: str = Field(
+        description="Logstore name for workflow runs (used as table name)",
+        default="workflow_runs",
+    )
+
+    LOGSTORE_NODE_EXECUTIONS: str = Field(
+        description="Logstore name for workflow node executions (used as table name)",
+        default="workflow_node_executions",
+    )
+
+    LOGSTORE_CONNECTION_POOL_SIZE: int = Field(
+        description="Connection pool size for LogStore client",
+        default=10,
+    )
+
+
 class RepositoryConfig(BaseSettings):
     """
     Configuration for repository implementations
@@ -1234,6 +1285,7 @@ class FeatureConfig(
     InnerAPIConfig,
     IndexingConfig,
     LoggingConfig,
+    LogStoreConfig,
     MailConfig,
     ModelLoadBalanceConfig,
     ModerationConfig,
