@@ -1,0 +1,115 @@
+services:
+
+  # Frontend web application.
+  web:
+   image: arms-demo-registry.cn-hangzhou.cr.aliyuncs.com/arms-demo/dify-web:1.4.0
+   restart: always
+   environment:
+     CONSOLE_API_URL: http://127.0.0.1:5001
+     APP_API_URL: http://127.0.0.1:5001
+     SENTRY_DSN: ${WEB_SENTRY_DSN:-}
+     NEXT_TELEMETRY_DISABLED: ${NEXT_TELEMETRY_DISABLED:-0}
+     TEXT_GENERATION_TIMEOUT_MS: ${TEXT_GENERATION_TIMEOUT_MS:-60000}
+     CSP_WHITELIST: ${CSP_WHITELIST:-}
+     MARKETPLACE_API_URL: ${MARKETPLACE_API_URL:-https://marketplace.dify.ai}
+     MARKETPLACE_URL: ${MARKETPLACE_URL:-https://marketplace.dify.ai}
+     TOP_K_MAX_VALUE: ${TOP_K_MAX_VALUE:-}
+     INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH: ${INDEXING_MAX_SEGMENTATION_TOKENS_LENGTH:-}
+     PM2_INSTANCES: ${PM2_INSTANCES:-2}
+
+  # The postgres database.
+  db:
+    image: arms-demo-registry.cn-hangzhou.cr.aliyuncs.com/arms-demo/postgres:15-alpine
+    restart: always
+    env_file:
+      - ./middleware.env
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-difyai123456}
+      POSTGRES_DB: ${POSTGRES_DB:-dify}
+      PGDATA: ${PGDATA:-/var/lib/postgresql/data/pgdata}
+    command: >
+      postgres -c 'max_connections=${POSTGRES_MAX_CONNECTIONS:-100}'
+               -c 'shared_buffers=${POSTGRES_SHARED_BUFFERS:-128MB}'
+               -c 'work_mem=${POSTGRES_WORK_MEM:-4MB}'
+               -c 'maintenance_work_mem=${POSTGRES_MAINTENANCE_WORK_MEM:-64MB}'
+               -c 'effective_cache_size=${POSTGRES_EFFECTIVE_CACHE_SIZE:-4096MB}'
+    volumes:
+      - ${PGDATA_HOST_VOLUME:-./volumes/db/data}:/var/lib/postgresql/data
+    ports:
+      - "${EXPOSE_POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: [ "CMD", "pg_isready" ]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+
+  # The redis cache.
+  redis:
+#    image: redis:6-alpine
+    image: arms-demo-registry.cn-hangzhou.cr.aliyuncs.com/arms-demo/redis:6-alpine
+    restart: always
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD:-difyai123456}
+    volumes:
+      # Mount the redis data directory to the container.
+      - ${REDIS_HOST_VOLUME:-./volumes/redis/data}:/data
+    # Set the redis password when startup redis server.
+    command: redis-server --requirepass ${REDIS_PASSWORD:-difyai123456}
+    ports:
+      - "${EXPOSE_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+
+  # The DifySandbox
+  sandbox:
+    image: arms-demo-registry.cn-hangzhou.cr.aliyuncs.com/arms-demo/dify-sandbox:0.2.12
+    restart: always
+    environment:
+      # The DifySandbox configurations
+      # Make sure you are changing this key for your deployment with a strong key.
+      # You can generate a strong key using `openssl rand -base64 42`.
+      API_KEY: ${SANDBOX_API_KEY:-dify-sandbox}
+      GIN_MODE: ${SANDBOX_GIN_MODE:-release}
+      WORKER_TIMEOUT: ${SANDBOX_WORKER_TIMEOUT:-15}
+      ENABLE_NETWORK: ${SANDBOX_ENABLE_NETWORK:-true}
+      PIP_MIRROR_URL: https://mirrors.aliyun.com/pypi/simple/
+#      HTTP_PROXY: ${SANDBOX_HTTP_PROXY:-http://ssrf_proxy:3128}
+#      HTTPS_PROXY: ${SANDBOX_HTTPS_PROXY:-http://ssrf_proxy:3128}
+      SANDBOX_PORT: ${SANDBOX_PORT:-8194}
+    volumes:
+      - ./volumes/sandbox/dependencies:/dependencies
+      - ./volumes/sandbox/conf:/conf
+    ports:
+      - "8194:8194"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8194/health" ]
+
+
+  # The Weaviate vector store.
+  weaviate:
+#    image: semitechnologies/weaviate:1.19.0
+    image: arms-demo-registry.cn-hangzhou.cr.aliyuncs.com/arms-demo/weaviate:1.19.0
+    profiles:
+      - ""
+      - weaviate
+    restart: always
+    volumes:
+      # Mount the Weaviate data directory to the container.
+      - ${WEAVIATE_HOST_VOLUME:-./volumes/weaviate}:/var/lib/weaviate
+    env_file:
+      - ./middleware.env
+    environment:
+      # The Weaviate configurations
+      # You can refer to the [Weaviate](https://weaviate.io/developers/weaviate/config-refs/env-vars) documentation for more information.
+      PERSISTENCE_DATA_PATH: ${WEAVIATE_PERSISTENCE_DATA_PATH:-/var/lib/weaviate}
+      QUERY_DEFAULTS_LIMIT: ${WEAVIATE_QUERY_DEFAULTS_LIMIT:-25}
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: ${WEAVIATE_AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED:-false}
+      DEFAULT_VECTORIZER_MODULE: ${WEAVIATE_DEFAULT_VECTORIZER_MODULE:-none}
+      CLUSTER_HOSTNAME: ${WEAVIATE_CLUSTER_HOSTNAME:-node1}
+      AUTHENTICATION_APIKEY_ENABLED: ${WEAVIATE_AUTHENTICATION_APIKEY_ENABLED:-true}
+      AUTHENTICATION_APIKEY_ALLOWED_KEYS: ${WEAVIATE_AUTHENTICATION_APIKEY_ALLOWED_KEYS:-WVF5YThaHlkYwhGUSmCRgsX3tD5ngdN8pkih}
+      AUTHENTICATION_APIKEY_USERS: ${WEAVIATE_AUTHENTICATION_APIKEY_USERS:-hello@dify.ai}
+      AUTHORIZATION_ADMINLIST_ENABLED: ${WEAVIATE_AUTHORIZATION_ADMINLIST_ENABLED:-true}
+      AUTHORIZATION_ADMINLIST_USERS: ${WEAVIATE_AUTHORIZATION_ADMINLIST_USERS:-hello@dify.ai}
+    ports:
+      - "${EXPOSE_WEAVIATE_PORT:-8080}:8080"
