@@ -156,6 +156,7 @@ class AliyunLogStorePG:
             # Quick ping test - execute a lightweight query
             # For SLS PG protocol, we can't use SELECT 1 without FROM,
             # so we just check the connection status
+            conn.autocommit = True
             with conn.cursor() as cursor:
                 cursor.execute("SELECT 1")
                 cursor.fetchone()
