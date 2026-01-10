@@ -108,7 +108,7 @@ class AliyunLogStorePG:
                 password=self._access_key_secret,
                 sslmode="require",
                 connect_timeout=5,
-                application_name=f"Dify-{dify_config.project.version}",
+                application_name=f"Dify-{dify_config.project.version}-fixautocommit",
             )
 
             # Note: Skip test query because SLS PG protocol only supports SELECT/INSERT on actual tables
