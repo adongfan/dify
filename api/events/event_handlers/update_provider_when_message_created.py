@@ -1,18 +1,14 @@
 import logging
 import time as time_module
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 from pydantic import BaseModel
-from sqlalchemy import update
-from sqlalchemy.engine import CursorResult
-from sqlalchemy.orm import Session
 
 from configs import dify_config
 from core.app.entities.app_invoke_entities import AgentChatAppGenerateEntity, ChatAppGenerateEntity
 from core.entities.provider_entities import QuotaUnit, SystemConfiguration
 from events.message_event import message_was_created
-from extensions.ext_database import db
 from extensions.ext_redis import redis_client, redis_fallback
 from libs import datetime_utils
 from models.model import Message
@@ -212,80 +208,84 @@ def _calculate_quota_usage(
 
 def _execute_provider_updates(updates_to_perform: list[_ProviderUpdateOperation]):
     """Execute all Provider updates in a single transaction."""
-    if not updates_to_perform:
-        return
+    # PERFORMANCE: Temporarily disabled to improve performance
+    # TODO: Re-enable or implement async processing if provider tracking is needed
+    return
 
-    updates_to_perform = sorted(updates_to_perform, key=lambda i: (i.filters.tenant_id, i.filters.provider_name))
+    # if not updates_to_perform:
+    #     return
 
-    # Use SQLAlchemy's context manager for transaction management
-    # This automatically handles commit/rollback
-    with Session(db.engine) as session, session.begin():
-        # Use a single transaction for all updates
-        for update_operation in updates_to_perform:
-            filters = update_operation.filters
-            values = update_operation.values
-            additional_filters = update_operation.additional_filters
-            description = update_operation.description
+    # updates_to_perform = sorted(updates_to_perform, key=lambda i: (i.filters.tenant_id, i.filters.provider_name))
 
-            # Build the where conditions
-            where_conditions = [
-                Provider.tenant_id == filters.tenant_id,
-                Provider.provider_name == filters.provider_name,
-            ]
+    # # Use SQLAlchemy's context manager for transaction management
+    # # This automatically handles commit/rollback
+    # with Session(db.engine) as session, session.begin():
+    #     # Use a single transaction for all updates
+    #     for update_operation in updates_to_perform:
+    #         filters = update_operation.filters
+    #         values = update_operation.values
+    #         additional_filters = update_operation.additional_filters
+    #         description = update_operation.description
 
-            # Add additional filters if specified
-            if filters.provider_type is not None:
-                where_conditions.append(Provider.provider_type == filters.provider_type)
-            if filters.quota_type is not None:
-                where_conditions.append(Provider.quota_type == filters.quota_type)
-            if additional_filters.quota_limit_check:
-                where_conditions.append(Provider.quota_limit > Provider.quota_used)
+    #         # Build the where conditions
+    #         where_conditions = [
+    #             Provider.tenant_id == filters.tenant_id,
+    #             Provider.provider_name == filters.provider_name,
+    #         ]
 
-            # Prepare values dict for SQLAlchemy update
-            update_values = {}
+    #         # Add additional filters if specified
+    #         if filters.provider_type is not None:
+    #             where_conditions.append(Provider.provider_type == filters.provider_type)
+    #         if filters.quota_type is not None:
+    #             where_conditions.append(Provider.quota_type == filters.quota_type)
+    #         if additional_filters.quota_limit_check:
+    #             where_conditions.append(Provider.quota_limit > Provider.quota_used)
 
-            # NOTE: For frequently used providers under high load, this implementation may experience
-            # race conditions or update contention despite the time-window optimization:
-            # 1. Multiple concurrent requests might check the same cache key simultaneously
-            # 2. Redis cache operations are not atomic with database updates
-            # 3. Heavy providers could still face database lock contention during peak usage
-            # The current implementation is acceptable for most scenarios, but future optimization
-            # considerations could include: batched updates, or async processing.
-            if values.last_used is not None:
-                cache_key = _get_provider_cache_key(filters.tenant_id, filters.provider_name)
-                now = datetime_utils.naive_utc_now()
-                last_update = _get_last_update_timestamp(cache_key)
+    #         # Prepare values dict for SQLAlchemy update
+    #         update_values = {}
 
-                if last_update is None or (now - last_update).total_seconds() > LAST_USED_UPDATE_WINDOW_SECONDS:  # type: ignore
-                    update_values["last_used"] = values.last_used
-                    _set_last_update_timestamp(cache_key, now)
+    #         # NOTE: For frequently used providers under high load, this implementation may experience
+    #         # race conditions or update contention despite the time-window optimization:
+    #         # 1. Multiple concurrent requests might check the same cache key simultaneously
+    #         # 2. Redis cache operations are not atomic with database updates
+    #         # 3. Heavy providers could still face database lock contention during peak usage
+    #         # The current implementation is acceptable for most scenarios, but future optimization
+    #         # considerations could include: batched updates, or async processing.
+    #         if values.last_used is not None:
+    #             cache_key = _get_provider_cache_key(filters.tenant_id, filters.provider_name)
+    #             now = datetime_utils.naive_utc_now()
+    #             last_update = _get_last_update_timestamp(cache_key)
 
-            if values.quota_used is not None:
-                update_values["quota_used"] = values.quota_used
-            # Skip the current update operation if no updates are required.
-            if not update_values:
-                continue
+    #             if last_update is None or (now - last_update).total_seconds() > LAST_USED_UPDATE_WINDOW_SECONDS:
+    #                 update_values["last_used"] = values.last_used
+    #                 _set_last_update_timestamp(cache_key, now)
 
-            # Build and execute the update statement
-            stmt = update(Provider).where(*where_conditions).values(**update_values)
-            result = cast(CursorResult, session.execute(stmt))
-            rows_affected = result.rowcount
+    #         if values.quota_used is not None:
+    #             update_values["quota_used"] = values.quota_used
+    #         # Skip the current update operation if no updates are required.
+    #         if not update_values:
+    #             continue
 
-            logger.debug(
-                "Provider update (%s): %s rows affected. Filters: %s, Values: %s",
-                description,
-                rows_affected,
-                filters.model_dump(),
-                update_values,
-            )
+    #         # Build and execute the update statement
+    #         stmt = update(Provider).where(*where_conditions).values(**update_values)
+    #         result = cast(CursorResult, session.execute(stmt))
+    #         rows_affected = result.rowcount
 
-            # If no rows were affected for quota updates, log a warning
-            if rows_affected == 0 and description == "quota_deduction_update":
-                logger.warning(
-                    "No Provider rows updated for quota deduction. "
-                    "This may indicate quota limit exceeded or provider not found. "
-                    "Filters: %s",
-                    filters.model_dump(),
-                )
+    #         logger.debug(
+    #             "Provider update (%s): %s rows affected. Filters: %s, Values: %s",
+    #             description,
+    #             rows_affected,
+    #             filters.model_dump(),
+    #             update_values,
+    #         )
 
-        logger.debug("Successfully processed %s Provider updates", len(updates_to_perform))
+    #         # If no rows were affected for quota updates, log a warning
+    #         if rows_affected == 0 and description == "quota_deduction_update":
+    #             logger.warning(
+    #                 "No Provider rows updated for quota deduction. "
+    #                 "This may indicate quota limit exceeded or provider not found. "
+    #                 "Filters: %s",
+    #                 filters.model_dump(),
+    #             )
+
+    #     logger.debug("Successfully processed %s Provider updates", len(updates_to_perform))
